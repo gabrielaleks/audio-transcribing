@@ -1,14 +1,46 @@
 from __future__ import annotations
-from typing import Any
-from dotenv import load_dotenv
-from pyannote.audio import Pipeline
-from pydub import AudioSegment
-from openai import OpenAI
 import time
 import os
 import shutil
 import sys
 import soundfile as sf
+from typing import Any
+from dotenv import load_dotenv
+from pyannote.audio import Pipeline
+from pydub import AudioSegment
+from openai import OpenAI
+from langchain_openai import ChatOpenAI
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import ChatPromptTemplate
+
+
+def replace_speakers_names(transcribed_file_path: str) -> None:
+    with open(transcribed_file_path, "r") as file:
+        conversation = file.read()
+
+    model = ChatOpenAI(
+        model="gpt-4o",
+        temperature=0,
+    )
+
+    prompt = ChatPromptTemplate.from_template(
+        "Read the following conversation: {conversation}."
+        "Find the names of the speakers in the text. Replace SPEAKER_XX by their respective names."
+        "Do not make up names for them. Do not add an introduction of any kind, like 'Sure, here is the conversation with the names of the speakers replaced:'"
+        "Follow this template:"
+        "ALEX\nHello, this is Alex.\n\n"
+        "MATT\nAnd this is Matt!\n\n"
+    )
+    output_parser = StrOutputParser()
+
+    chain = prompt | model | output_parser
+
+    answer = chain.invoke({"conversation": conversation})
+
+    # Overwrite original file with answer
+    with open(transcribed_file_path, "w") as output_file:
+        output_file.write(answer)
+        print(f"Transcription saved as {transcribed_file_path}")
 
 
 def cleanup(diarizations_path: str) -> None:
@@ -20,7 +52,7 @@ def cleanup(diarizations_path: str) -> None:
 
 def transcribe_audio(
     raw_audio_file_path: str,
-    transcriptions_path: str,
+    transcribed_file_path: str,
     speaker_id: str,
     openai_apikey: str,
 ) -> None:
@@ -32,11 +64,11 @@ def transcribe_audio(
         )
 
         # Create the transcription folder if it doesn't exist
-        output_folder = os.path.dirname(transcriptions_path)
+        output_folder = os.path.dirname(transcribed_file_path)
         os.makedirs(output_folder, exist_ok=True)
 
         # Append speaker ID and transcription to the output txt file
-        with open(transcriptions_path, "a") as output_file:
+        with open(transcribed_file_path, "a") as output_file:
             output_file.write(f"{speaker_id}\n")
             output_file.write(transcription.text)
             output_file.write("\n\n")
@@ -52,7 +84,7 @@ def extract_chunk_number(file_name: str) -> int:
 
 
 def transcribe_diarized_files(
-    diarizations_path: str, transcriptions_path: str, openai_key: str
+    diarizations_path: str, transcribed_file_path: str, openai_key: str
 ) -> None:
     file_names_sorted = sorted(os.listdir(diarizations_path), key=extract_chunk_number)
 
@@ -66,7 +98,10 @@ def transcribe_diarized_files(
                 if duration >= 0.1:
                     speaker_id = file_name.split("-speaker_")[-1].split(".")[0]
                     transcribe_audio(
-                        raw_audio_file_path, transcriptions_path, speaker_id, openai_key
+                        raw_audio_file_path,
+                        transcribed_file_path,
+                        speaker_id,
+                        openai_key,
                     )
         except Exception as e:
             print(f"Error processing file {file_name}: {e}")
@@ -107,14 +142,17 @@ def diarize_and_transcribe(raw_audio_file_path: str) -> None:
 
     start_time = time.perf_counter()
 
-    # Set paths
+    # Set paths to directories
     base_path = os.path.dirname(__file__)
     resources_path = os.path.join(base_path, "resources")
     diarizations_path = os.path.join(resources_path, "diarizations")
+    transcriptions_path = os.path.join(resources_path, "transcriptions")
+
+    # Set paths to files
     base_file_name = os.path.basename(raw_audio_file_path)
     base_name_without_extension = os.path.splitext(base_file_name)[0]
-    transcriptions_path = os.path.join(
-        resources_path, "transcriptions", base_name_without_extension + ".txt"
+    transcribed_file_path = os.path.join(
+        transcriptions_path, base_name_without_extension + ".txt"
     )
 
     # Fetch api keys from environment
@@ -141,11 +179,16 @@ def diarize_and_transcribe(raw_audio_file_path: str) -> None:
 
     # Transcribe audio segments into unified text file
     print(f"Starting transcription for {base_file_name}...")
-    transcribe_diarized_files(diarizations_path, transcriptions_path, openai_key)
+    transcribe_diarized_files(diarizations_path, transcribed_file_path, openai_key)
     print(f"Finished transcription for {base_file_name}!")
 
     # Remove diarizations folder and its files
     cleanup(diarizations_path)
+
+    # Start name replacement
+    print(f"Starting name replacement for {base_file_name}...")
+    replace_speakers_names(transcribed_file_path)
+    print(f"Finished name replacement for {base_file_name}")
 
     end_time = time.perf_counter()
     elapsed_time = end_time - start_time
