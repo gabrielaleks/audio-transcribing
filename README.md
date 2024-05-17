@@ -1,4 +1,4 @@
-# Audio transcription
+# Audio transcribing
 The purpose of the script contained here is to transcribe an audio file (in the .wav format) to a .txt file. First, using [pyannote.audio](https://huggingface.co/pyannote), it will handle speaker diarization, identifying and segmenting the audio file into diferent fragments associated to a particular speaker. Then, using [Whisper](https://openai.com/index/whisper/), each audio fragment will be transcribed into a text file along with the respective speaker. Finally, the text file content will be provided as input to an OpenAI's model so it can detect the speakers' names and add them to the file.
 
 # Setup
